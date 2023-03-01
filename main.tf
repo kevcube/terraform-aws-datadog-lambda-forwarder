@@ -13,17 +13,16 @@ data "aws_region" "current" {
 locals {
   enabled        = module.this.enabled
   arn_format     = local.enabled ? "arn:${data.aws_partition.current[0].partition}" : ""
-  aws_account_id = join("", data.aws_caller_identity.current[*].account_id)
   aws_region     = join("", data.aws_region.current[*].name)
   lambda_enabled = local.enabled
 
   dd_api_key_resource    = var.dd_api_key_source.resource
   dd_api_key_identifier  = var.dd_api_key_source.identifier
-  dd_api_key_arn         = local.dd_api_key_resource == "ssm" ? coalesce(var.api_key_ssm_arn, join("", data.aws_ssm_parameter.api_key[*].arn)) : local.dd_api_key_identifier
-  dd_api_key_iam_actions = [lookup({ kms = "kms:Decrypt", asm = "secretsmanager:GetSecretValue", ssm = "ssm:GetParameter" }, local.dd_api_key_resource, "")]
+  dd_api_key_arn         = local.dd_api_key_resource == "ssm" || local.dd_api_key_resource == "ssm_secureString" ? coalesce(var.api_key_ssm_arn, join("", data.aws_ssm_parameter.api_key[*].arn)) : local.dd_api_key_identifier
+  dd_api_key_iam_actions = [lookup({ kms = "kms:Decrypt", asm = "secretsmanager:GetSecretValue", ssm = "ssm:GetParameter", ssm_secureString = "ssm:GetParameter" }, local.dd_api_key_resource, "")]
   dd_api_key_kms         = local.dd_api_key_resource == "kms" ? { DD_KMS_API_KEY = var.dd_api_key_kms_ciphertext_blob } : {}
   dd_api_key_asm         = local.dd_api_key_resource == "asm" ? { DD_API_KEY_SECRET_ARN = local.dd_api_key_identifier } : {}
-  dd_api_key_ssm         = local.dd_api_key_resource == "ssm" ? { DD_API_KEY_SSM_NAME = local.dd_api_key_identifier } : {}
+  dd_api_key_ssm         = local.dd_api_key_resource == "ssm" || local.dd_api_key_resource == "ssm_secureString" ? { DD_API_KEY_SSM_NAME = local.dd_api_key_identifier } : {}
 
   dd_site = { DD_SITE = var.forwarder_lambda_datadog_host }
 
@@ -42,7 +41,7 @@ locals {
 # Log Forwarder, RDS Enhanced Forwarder, VPC Flow Log Forwarder
 
 data "aws_ssm_parameter" "api_key" {
-  count = local.lambda_enabled && local.dd_api_key_resource == "ssm" && var.api_key_ssm_arn == null ? 1 : 0
+  count = local.lambda_enabled && (local.dd_api_key_resource == "ssm" || local.dd_api_key_resource == "ssm_secureString") && var.api_key_ssm_arn == null ? 1 : 0
   name  = local.dd_api_key_identifier
 }
 
@@ -106,5 +105,15 @@ data "aws_iam_policy_document" "lambda_default" {
     actions = local.dd_api_key_iam_actions
 
     resources = [local.dd_api_key_arn]
+  }
+
+  dynamic "statement" {
+    for_each = var.dd_api_key_source.resource == "ssm_secureString" ? [1] : []
+    content {
+      sid       = "AllowDecrypt"
+      effect    = "Allow"
+      actions   = ["kms:Decrypt"]
+      resources = [var.dd_api_key_source.securestring_kms_key_arn]
+    }
   }
 }

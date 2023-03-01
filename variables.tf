@@ -52,6 +52,7 @@ variable "dd_api_key_source" {
   type = object({
     resource   = string
     identifier = string
+    securestring_kms_key_arn = optional(string)
   })
 
   default = {
@@ -59,10 +60,10 @@ variable "dd_api_key_source" {
     identifier = ""
   }
 
-  # Resource can be one of kms, asm, ssm ("" to disable all lambda resources)
+  # Resource can be one of kms, asm, ssm, ssm_secureString ("" to disable all lambda resources)
   validation {
-    condition     = can(regex("(kms|asm|ssm)", var.dd_api_key_source.resource)) || var.dd_api_key_source.resource == ""
-    error_message = "Provide one, and only one, ARN for (kms, asm) or name (ssm) to retrieve or decrypt Datadog api key."
+    condition     = can(regex("(kms|asm|ssm|ssm_secureString)", var.dd_api_key_source.resource)) || var.dd_api_key_source.resource == ""
+    error_message = "Provide one, and only one, ARN for (kms, asm) or name (ssm, ssm_secureString) to retrieve or decrypt Datadog api key."
   }
 
   # Check KMS ARN format
@@ -79,8 +80,14 @@ variable "dd_api_key_source" {
 
   # Check SSM name format
   validation {
-    condition     = var.dd_api_key_source.resource == "ssm" ? can(regex("^[a-zA-Z0-9_./-]+$", var.dd_api_key_source.identifier)) : true
+    condition     = var.dd_api_key_source.resource == "ssm" || var.dd_api_key_source.resource == "ssm_secureString" ? can(regex("^[a-zA-Z0-9_./-]+$", var.dd_api_key_source.identifier)) : true
     error_message = "Name for SSM parameter does not appear to be valid format, acceptable characters are `a-zA-Z0-9_.-` and `/` to delineate hierarchies."
+  }
+
+  # Check SSM secureString has KMS key
+  validation {
+    condition     = var.dd_api_key_source.resource == "ssm_secureString" && var.dd_api_key_source.securestring_kms_key_arn == null ? false : true
+    error_message = "Provide ARN for KMS key used to encrypt SSM secureString parameter as `dd_api_key_source.securestring_kms_key_arn`."
   }
 }
 
